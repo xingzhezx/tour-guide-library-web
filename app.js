@@ -1,7 +1,6 @@
 const STORAGE_KEY = "tourGuideLibraryV1";
 const AUTH_USERS_KEY = "tourGuideUsersV1";
 const AUTH_SESSION_KEY = "tourGuideSessionV1";
-const WEB_SEARCH_SETTINGS_KEY = "tourGuideWebSearchSettingsV1";
 const PDFJS_LIB_URL =
   "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js";
 const PDFJS_WORKER_URL =
@@ -20,8 +19,6 @@ const DB_NAME = "tourGuideLibraryDB";
 const DB_VERSION = 1;
 const AUDIO_STORE = "audioBlobs";
 const EDITOR_SECTIONS = ["intro", "script", "webscript", "tips", "catalog", "audio"];
-const TAVILY_API_URL = "https://api.tavily.com/search";
-const TAVILY_MAX_QUERY_LENGTH = 400;
 const STARTER_TEMPLATES = [
   {
     id: "ancient_town",
@@ -70,7 +67,6 @@ const state = {
   authUser: "",
   currentView: "home",
   homeTab: "featured",
-  webSearchApiKey: "",
 };
 
 const el = {
@@ -80,12 +76,6 @@ const el = {
   authPassword: document.querySelector("#authPassword"),
   authLoginBtn: document.querySelector("#authLoginBtn"),
   authRegisterBtn: document.querySelector("#authRegisterBtn"),
-  searchSettingsOverlay: document.querySelector("#searchSettingsOverlay"),
-  searchSettingsBtn: document.querySelector("#searchSettingsBtn"),
-  searchSettingsCloseBtn: document.querySelector("#searchSettingsCloseBtn"),
-  searchSettingsSaveBtn: document.querySelector("#searchSettingsSaveBtn"),
-  searchSettingsClearBtn: document.querySelector("#searchSettingsClearBtn"),
-  searchApiKeyInput: document.querySelector("#searchApiKeyInput"),
   currentUser: document.querySelector("#currentUser"),
   logoutBtn: document.querySelector("#logoutBtn"),
   homeViewBtn: document.querySelector("#homeViewBtn"),
@@ -140,9 +130,10 @@ const el = {
 init();
 
 async function init() {
-  loadWebSearchSettings();
+  try {
+    localStorage.removeItem("tourGuideWebSearchSettingsV1");
+  } catch (error) {}
   bindEvents();
-  updateSearchSettingsView();
   registerServiceWorker();
   const loggedIn = await restoreSession();
   if (!loggedIn) {
@@ -170,10 +161,6 @@ function bindEvents() {
   el.authLoginBtn?.addEventListener("click", handleAuthLogin);
   el.authRegisterBtn?.addEventListener("click", handleAuthRegister);
   el.logoutBtn?.addEventListener("click", handleAuthLogout);
-  el.searchSettingsBtn?.addEventListener("click", openSearchSettings);
-  el.searchSettingsCloseBtn?.addEventListener("click", closeSearchSettings);
-  el.searchSettingsSaveBtn?.addEventListener("click", handleSaveSearchSettings);
-  el.searchSettingsClearBtn?.addEventListener("click", handleClearSearchSettings);
   el.homeViewBtn?.addEventListener("click", () => switchAppView("home"));
   el.libraryViewBtn?.addEventListener("click", () => switchAppView("library"));
   el.dashboardEnterBtn?.addEventListener("click", () => switchAppView("library"));
@@ -242,60 +229,6 @@ function bindEvents() {
     audioObjectUrls.forEach((url) => URL.revokeObjectURL(url));
     audioObjectUrls.clear();
   });
-}
-
-function loadWebSearchSettings() {
-  try {
-    const raw = localStorage.getItem(WEB_SEARCH_SETTINGS_KEY);
-    if (!raw) return;
-    const parsed = JSON.parse(raw);
-    state.webSearchApiKey = String(parsed?.tavilyApiKey || "").trim();
-  } catch (error) {
-    state.webSearchApiKey = "";
-  }
-}
-
-function saveWebSearchSettings() {
-  localStorage.setItem(
-    WEB_SEARCH_SETTINGS_KEY,
-    JSON.stringify({ tavilyApiKey: state.webSearchApiKey || "" }),
-  );
-}
-
-function updateSearchSettingsView() {
-  if (el.searchApiKeyInput) {
-    el.searchApiKeyInput.value = state.webSearchApiKey || "";
-  }
-}
-
-function openSearchSettings() {
-  updateSearchSettingsView();
-  el.searchSettingsOverlay?.classList.remove("hidden");
-}
-
-function closeSearchSettings() {
-  el.searchSettingsOverlay?.classList.add("hidden");
-}
-
-function handleSaveSearchSettings() {
-  state.webSearchApiKey = String(el.searchApiKeyInput?.value || "").trim();
-  saveWebSearchSettings();
-  updateSearchSettingsView();
-  closeSearchSettings();
-  alert(
-    state.webSearchApiKey
-      ? "高级搜索设置已保存，后续会优先使用 Tavily。"
-      : "已切回默认联网搜索模式。",
-  );
-}
-
-function handleClearSearchSettings() {
-  state.webSearchApiKey = "";
-  saveWebSearchSettings();
-  updateSearchSettingsView();
-  if (el.searchApiKeyInput) {
-    el.searchApiKeyInput.value = "";
-  }
 }
 
 function getScopedStorageKey() {
@@ -2233,18 +2166,7 @@ function buildKeywordsHint(error) {
 
 function resolveWebSearchErrorMessage(error, fallbackText) {
   const message = String(error?.message || "");
-  if (message === "MISSING_TAVILY_API_KEY") {
-    return fallbackText;
-  }
-  if (/^TAVILY_401/.test(message) || /^TAVILY_403/.test(message)) {
-    return "高级搜索密钥无效，系统已切回默认联网搜索。";
-  }
-  if (/^TAVILY_429/.test(message)) {
-    return "高级搜索额度不足或请求过快，请稍后再试。";
-  }
-  if (/^TAVILY_/.test(message)) {
-    return "高级搜索服务暂时不可用，请稍后重试。";
-  }
+  if (/^HTTP_429/.test(message)) return "联网检索过于频繁，请稍后再试。";
   return fallbackText;
 }
 
@@ -2368,52 +2290,8 @@ async function fetchSpotContentByMode(name, mode) {
   }
 
   const keywords = buildScenicSearchKeywords(scenicName);
-  const hasTavilyKey = Boolean(String(state.webSearchApiKey || "").trim());
-  if (!hasTavilyKey) {
-    const fallbackResult = await fetchFullWebVerifiedContent(scenicName, keywords, mode);
-    if (!fallbackResult) {
-      const err = new Error("WEB_CONTENT_EMPTY");
-      err.keywords = keywords;
-      throw err;
-    }
-    if (mode === "tips") {
-      return {
-        tips: fallbackResult.tips || [],
-        sourceUrl: fallbackResult.sourceUrl,
-        sources: fallbackResult.sourceUrl
-          ? [{ title: "全网检索结果", url: fallbackResult.sourceUrl }]
-          : [],
-        keywords,
-      };
-    }
-    if (mode === "script") {
-      return {
-        script: fallbackResult.content || "",
-        sourceUrl: fallbackResult.sourceUrl,
-        sources: fallbackResult.sourceUrl
-          ? [{ title: "全网检索结果", url: fallbackResult.sourceUrl }]
-          : [],
-        keywords,
-      };
-    }
-    return {
-      intro: fallbackResult.content || "",
-      sourceUrl: fallbackResult.sourceUrl,
-      sources: fallbackResult.sourceUrl
-        ? [{ title: "全网检索结果", url: fallbackResult.sourceUrl }]
-        : [],
-      keywords,
-    };
-  }
-
-  const query = buildTavilySearchQuery(scenicName, mode);
-  setJobStatus(`联网搜索中：${query}`);
-  const result = await searchWithTavily({
-    query,
-    maxResults: mode === "script" ? 6 : 5,
-  });
-  const extracted = extractSpotContentFromTavilyResult(result, scenicName, mode);
-  if (!extracted || !result) {
+  const result = await fetchFullWebVerifiedContent(scenicName, keywords, mode);
+  if (!result) {
     const err = new Error("WEB_CONTENT_EMPTY");
     err.keywords = keywords;
     throw err;
@@ -2421,120 +2299,26 @@ async function fetchSpotContentByMode(name, mode) {
 
   if (mode === "tips") {
     return {
-      tips: extracted.tips || [],
-      sourceUrl: result.sources?.[0]?.url || "",
-      sources: result.sources || [],
+      tips: result.tips || [],
+      sourceUrl: result.sourceUrl,
+      sources: result.sourceUrl ? [{ title: "全网检索结果", url: result.sourceUrl }] : [],
       keywords,
     };
   }
   if (mode === "script") {
     return {
-      script: extracted.script || "",
-      sourceUrl: result.sources?.[0]?.url || "",
-      sources: result.sources || [],
+      script: result.content || "",
+      sourceUrl: result.sourceUrl,
+      sources: result.sourceUrl ? [{ title: "全网检索结果", url: result.sourceUrl }] : [],
       keywords,
     };
   }
   return {
-    intro: extracted.intro || "",
-    sourceUrl: result.sources?.[0]?.url || "",
-    sources: result.sources || [],
+    intro: result.content || "",
+    sourceUrl: result.sourceUrl,
+    sources: result.sourceUrl ? [{ title: "全网检索结果", url: result.sourceUrl }] : [],
     keywords,
   };
-}
-
-function buildTavilySearchQuery(scenicName, mode) {
-  if (mode === "script") {
-    return `${scenicName} 导游讲解词 讲解顺序 历史文化 核心看点 游览路线`;
-  }
-  if (mode === "tips") {
-    return `${scenicName} 营业时间 门票价格 优惠政策 免票政策 导览图 预约 停车 交通 注意事项`;
-  }
-  return `${scenicName} 景区介绍 历史文化 核心看点 官方简介 旅游概况`;
-}
-
-async function searchWithTavily(params) {
-  const query = String(params?.query || "").trim().slice(0, TAVILY_MAX_QUERY_LENGTH);
-  const apiKey = String(state.webSearchApiKey || "").trim();
-  if (!apiKey) {
-    throw new Error("MISSING_TAVILY_API_KEY");
-  }
-  if (!query) {
-    throw new Error("EMPTY_QUERY");
-  }
-
-  const response = await fetch(TAVILY_API_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      query,
-      search_depth: "basic",
-      max_results: Number(params?.maxResults || 5),
-      include_answer: "basic",
-    }),
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text().catch(() => "");
-    throw new Error(`TAVILY_${response.status}:${errorText || response.statusText}`);
-  }
-
-  const data = await response.json();
-  return {
-    query: String(data?.query || query),
-    answer: String(data?.answer || ""),
-    responseTime: Number(data?.response_time || 0),
-    sources: Array.isArray(data?.results)
-      ? data.results.map((item) => ({
-          title: String(item?.title || "未命名来源"),
-          url: String(item?.url || ""),
-          content: sanitizeNetworkIntro(item?.content || ""),
-          score: Number(item?.score || 0),
-        }))
-      : [],
-  };
-}
-
-function buildTavilyContextText(result) {
-  const chunks = [];
-  if (result?.answer) {
-    chunks.push(String(result.answer).trim());
-  }
-  (result?.sources || []).forEach((item) => {
-    const block = [item.title, item.content].filter(Boolean).join("\n");
-    if (block.trim()) {
-      chunks.push(block.trim());
-    }
-  });
-  return sanitizeNetworkIntro(chunks.join("\n\n"));
-}
-
-function extractSpotContentFromTavilyResult(result, scenicName, mode) {
-  const aggregateText = buildTavilyContextText(result);
-  if (!aggregateText) return null;
-
-  if (mode === "tips") {
-    const tips = extractStructuredTravelTips(aggregateText, scenicName);
-    return tips.length ? { tips } : null;
-  }
-
-  if (mode === "script") {
-    const answerText = sanitizeNetworkIntro(result?.answer || "");
-    const rawScript = pickScriptParagraphsFromLongText(
-      [answerText, aggregateText].filter(Boolean).join("\n\n"),
-      scenicName,
-    );
-    const script = rawScript
-      ? buildReadableWebScript(rawScript, scenicName)
-      : buildReadableWebScript(aggregateText, scenicName);
-    return script ? { script } : null;
-  }
-
-  const intro = buildReadableIntroFromSearch(aggregateText, scenicName);
-  return intro ? { intro } : null;
 }
 
 function buildReadableIntroFromSearch(rawText, scenicName) {
