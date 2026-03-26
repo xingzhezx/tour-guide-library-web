@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#1f8f72" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="导游资料库" />
+    <title>导游资料库</title>
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="./icons/icon-512.png" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body class="mobile-list">
+    <header class="topbar">
+      <div>
+        <h1>导游资料库</h1>
+        <p>把讲解、联网资料、录音与注意事项集中整理成一套带队工作台</p>
+      </div>
+      <div class="view-switch">
+        <button id="homeViewBtn" class="ghost active" type="button">首页工作台</button>
+        <button id="libraryViewBtn" class="ghost" type="button">景区库</button>
+      </div>
+      <div class="topbar-actions">
+        <span id="currentUser" class="current-user hidden"></span>
+        <button id="logoutBtn" class="ghost hidden">退出登录</button>
+        <button id="exportBtn" class="ghost">导出数据</button>
+        <label class="import-label">
+          导入数据
+          <input
+            id="importInput"
+            type="file"
+            accept=".json,.txt,.dos,.pdf,.doc,.docx,application/json,text/json,text/plain,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,audio/*"
+            multiple
+            hidden
+          />
+        </label>
+      </div>
+      <p id="jobStatus" class="job-status hidden"></p>
+    </header>
+
+    <section id="authOverlay" class="auth-overlay hidden">
+      <div class="auth-card">
+        <h2>账号登录</h2>
+        <p class="auth-desc">登录后可使用你的专属导游资料库数据。</p>
+        <label>
+          账号
+          <input id="authUsername" autocomplete="username" placeholder="请输入账号" />
+        </label>
+        <label>
+          密码
+          <input id="authPassword" type="password" autocomplete="current-password" placeholder="请输入密码" />
+        </label>
+        <div class="auth-actions">
+          <button id="authLoginBtn" type="button">登录</button>
+          <button id="authRegisterBtn" type="button" class="ghost">注册账号</button>
+        </div>
+        <p class="auth-tip">提示：注册后数据按账号隔离保存在浏览器本地。</p>
+      </div>
+    </section>
+
+    <main class="app-shell">
+      <section id="dashboardView" class="dashboard-view">
+        <div class="hero-card">
+          <div class="hero-copy">
+            <span class="eyebrow">Guide OS</span>
+            <h2>像课堂主页一样管理你的导游带团内容</h2>
+            <p>把个人讲解词、网络讲解、营业信息、门票政策、导览图、录音和 OCR 导入集中在一个工作台，开团前直接进入使用。</p>
+            <div class="hero-actions">
+              <button id="dashboardEnterBtn" type="button">进入景区库</button>
+              <label class="import-label hero-import">
+                快速导入资料
+                <input
+                  id="dashboardImportInput"
+                  type="file"
+                  accept=".json,.txt,.dos,.pdf,.doc,.docx,application/json,text/json,text/plain,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,audio/*"
+                  multiple
+                  hidden
+                />
+              </label>
+            </div>
+          </div>
+          <div class="hero-side">
+            <div class="hero-note">今日工作流</div>
+            <ol class="hero-flow">
+              <li>导入讲解资料或录音</li>
+              <li>联网补全景区信息与注意事项</li>
+              <li>进入景区库边看边讲</li>
+            </ol>
+          </div>
+        </div>
+
+        <div class="stats-grid">
+          <article class="stat-card">
+            <span class="stat-label">景区总数</span>
+            <strong id="statSpots">0</strong>
+          </article>
+          <article class="stat-card">
+            <span class="stat-label">录音文件</span>
+            <strong id="statAudios">0</strong>
+          </article>
+          <article class="stat-card">
+            <span class="stat-label">网络讲解段落</span>
+            <strong id="statWebScripts">0</strong>
+          </article>
+          <article class="stat-card">
+            <span class="stat-label">注意事项</span>
+            <strong id="statTips">0</strong>
+          </article>
+        </div>
+
+        <div class="dashboard-toolbar">
+          <div id="dashboardTabs" class="dashboard-tabs">
+            <button id="homeFeaturedBtn" class="dashboard-tab active" type="button" data-home-tab="featured">精选模板</button>
+            <button id="homeMineBtn" class="dashboard-tab" type="button" data-home-tab="mine">我的景区</button>
+          </div>
+          <button id="homeCreateBtn" type="button" class="ghost">新建景区</button>
+        </div>
+
+        <section id="featuredPanel" class="dashboard-panel">
+          <div class="panel-heading">
+            <h3>精选带团模板</h3>
+            <p>按景区类型快速建立一套标准化资料结构。</p>
+          </div>
+          <div id="templateGrid" class="card-grid"></div>
+        </section>
+
+        <section id="minePanel" class="dashboard-panel hidden">
+          <div class="panel-heading">
+            <h3>我的景区</h3>
+            <p>最近编辑和已整理完成的景区资料，从这里一键进入。</p>
+          </div>
+          <div id="recentGrid" class="card-grid"></div>
+        </section>
+      </section>
+
+      <section id="libraryShell" class="layout hidden">
+        <aside class="panel list-panel">
+          <div class="row-between">
+            <h2>景区列表</h2>
+            <button id="addSpotBtn">+ 新建</button>
+          </div>
+          <input id="searchInput" class="search" placeholder="搜索景区名称..." />
+          <ul id="spotList" class="spot-list"></ul>
+        </aside>
+
+        <section class="panel editor-panel">
+          <div id="emptyState" class="empty-state">
+            <h3>还没有景区资料</h3>
+            <p>点击左侧“新建”，开始整理你的讲解内容。</p>
+          </div>
+
+          <form id="spotForm" class="form hidden">
+            <div class="form-head">
+              <h2>景区详情</h2>
+              <button id="deleteBtn" type="button" class="danger">删除景区</button>
+            </div>
+
+            <label class="base-name">
+              景区名称
+              <input id="nameInput" required />
+            </label>
+
+            <div id="fieldMenu" class="field-menu">
+              <button type="button" class="field-open-btn" data-section="intro">景区介绍</button>
+              <button type="button" class="field-open-btn" data-section="script">个人讲解词</button>
+              <button type="button" class="field-open-btn" data-section="webscript">网络讲解词</button>
+              <button type="button" class="field-open-btn" data-section="tips">注意事项</button>
+              <button type="button" class="field-open-btn" data-section="catalog">内容目录</button>
+              <button type="button" class="field-open-btn" data-section="audio">录音文件</button>
+            </div>
+
+            <div id="sectionIntro" class="section-panel hidden">
+              <div class="section-head">
+                <button id="sectionBackBtnIntro" type="button" class="ghost back-btn">返回</button>
+                <h3>景区介绍</h3>
+                <button id="fetchIntroBtn" type="button" class="ghost">联网补全</button>
+              </div>
+              <textarea id="introInput" rows="10" placeholder="景区背景、亮点、历史等"></textarea>
+            </div>
+
+            <div id="sectionScript" class="section-panel hidden">
+              <div class="section-head">
+                <button id="sectionBackBtnScript" type="button" class="ghost back-btn">返回</button>
+                <h3>个人讲解词</h3>
+                <button id="polishScriptBtn" type="button" class="ghost">一键精修</button>
+                <span class="section-tip">导入文件内容会放在这里</span>
+              </div>
+              <textarea id="scriptInput" rows="14" placeholder="按导游口播节奏整理讲解词"></textarea>
+            </div>
+
+            <div id="sectionWebScript" class="section-panel hidden">
+              <div class="section-head">
+                <button id="sectionBackBtnWebScript" type="button" class="ghost back-btn">返回</button>
+                <h3>网络讲解词</h3>
+                <button id="fetchWebScriptBtn" type="button" class="ghost">联网搜索</button>
+              </div>
+              <textarea id="webScriptInput" rows="14" placeholder="联网获取的讲解词会汇总在这里"></textarea>
+            </div>
+
+            <div id="sectionTips" class="section-panel hidden">
+              <div class="section-head">
+                <button id="sectionBackBtnTips" type="button" class="ghost back-btn">返回</button>
+                <h3>注意事项</h3>
+                <button id="fetchTipsBtn" type="button" class="ghost">联网补全</button>
+              </div>
+              <textarea id="tipsInput" rows="10" placeholder="重点记录：营业时间、门票价格、优惠/免票政策、导览图与其他提醒"></textarea>
+            </div>
+
+            <div id="sectionCatalog" class="section-panel hidden">
+              <div class="section-head">
+                <button id="sectionBackBtnCatalog" type="button" class="ghost back-btn">返回</button>
+                <h3>内容目录</h3>
+                <button id="refreshCatalogBtn" type="button" class="ghost">重建目录</button>
+              </div>
+              <div class="catalog-block">
+                <ul id="catalogList" class="catalog-list"></ul>
+                <pre id="catalogPreview" class="catalog-preview">点击目录项后在这里查看对应内容。</pre>
+              </div>
+            </div>
+
+            <div id="sectionAudio" class="section-panel hidden">
+              <div class="section-head">
+                <button id="sectionBackBtnAudio" type="button" class="ghost back-btn">返回</button>
+                <h3>录音文件</h3>
+                <label class="import-label small">
+                  上传录音
+                  <input id="audioInput" type="file" accept="audio/*" multiple hidden />
+                </label>
+              </div>
+              <div class="audio-block">
+                <p class="hint">提示：支持任意大小音频，较大文件处理会更慢。</p>
+                <ul id="audioList" class="audio-list"></ul>
+              </div>
+            </div>
+
+            <button class="save-btn" type="submit">保存当前景区</button>
+          </form>
+        </section>
+      </section>
+    </main>
+
+    <nav id="mobileNav" class="mobile-nav">
+      <button id="mobileListBtn" class="mobile-tab active" type="button">景区列表</button>
+      <button id="mobileEditorBtn" class="mobile-tab" type="button">编辑详情</button>
+    </nav>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
