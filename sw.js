@@ -1,4 +1,4 @@
-const CACHE_NAME = "tour-guide-library-v28";
+const CACHE_NAME = "tour-guide-library-v29";
 const APP_SHELL = [
   "./",
   "./index.html",

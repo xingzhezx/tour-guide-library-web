@@ -2236,7 +2236,7 @@ function buildKeywordsHint(error) {
 function resolveWebSearchErrorMessage(error, fallbackText) {
   const message = String(error?.message || "");
   if (message === "MISSING_TAVILY_API_KEY") {
-    return "请先在“搜索设置”里填写 Tavily API Key。";
+    return "当前未配置 Tavily API Key，系统将自动回退到免密钥全网检索。";
   }
   if (/^TAVILY_401/.test(message) || /^TAVILY_403/.test(message)) {
     return "Tavily API Key 无效，或当前密钥没有权限。请在“搜索设置”里更换。";
@@ -2277,11 +2277,6 @@ async function handleFetchIntroFromWeb() {
       alert("联网获取失败：当前设备处于离线状态。请先连接网络后重试。");
       return;
     }
-    if (String(error?.message || "") === "MISSING_TAVILY_API_KEY") {
-      openSearchSettings();
-      alert("联网获取失败：请先在“搜索设置”里填写 Tavily API Key。");
-      return;
-    }
     alert(`联网获取失败：${resolveWebSearchErrorMessage(error, "未找到可信简介，或当前网络对外部站点有限制。")}${buildKeywordsHint(error)}`);
   } finally {
     clearJobStatus(1200);
@@ -2313,11 +2308,6 @@ async function handleFetchWebScriptFromWeb() {
     console.warn(error);
     if (String(error?.message || "") === "OFFLINE") {
       alert("联网获取失败：当前设备处于离线状态。请先连接网络后重试。");
-      return;
-    }
-    if (String(error?.message || "") === "MISSING_TAVILY_API_KEY") {
-      openSearchSettings();
-      alert("联网获取失败：请先在“搜索设置”里填写 Tavily API Key。");
       return;
     }
     alert(`联网获取失败：${resolveWebSearchErrorMessage(error, "未找到可信讲解词。")}${buildKeywordsHint(error)}`);
@@ -2353,11 +2343,6 @@ async function handleFetchTipsFromWeb() {
       alert("联网获取失败：当前设备处于离线状态。请先连接网络后重试。");
       return;
     }
-    if (String(error?.message || "") === "MISSING_TAVILY_API_KEY") {
-      openSearchSettings();
-      alert("联网获取失败：请先在“搜索设置”里填写 Tavily API Key。");
-      return;
-    }
     alert(`联网获取失败：${resolveWebSearchErrorMessage(error, "未找到可信注意事项。")}${buildKeywordsHint(error)}`);
   } finally {
     clearJobStatus(1200);
@@ -2385,6 +2370,44 @@ async function fetchSpotContentByMode(name, mode) {
   }
 
   const keywords = buildScenicSearchKeywords(scenicName);
+  const hasTavilyKey = Boolean(String(state.webSearchApiKey || "").trim());
+  if (!hasTavilyKey) {
+    const fallbackResult = await fetchFullWebVerifiedContent(scenicName, keywords, mode);
+    if (!fallbackResult) {
+      const err = new Error("WEB_CONTENT_EMPTY");
+      err.keywords = keywords;
+      throw err;
+    }
+    if (mode === "tips") {
+      return {
+        tips: fallbackResult.tips || [],
+        sourceUrl: fallbackResult.sourceUrl,
+        sources: fallbackResult.sourceUrl
+          ? [{ title: "全网检索结果", url: fallbackResult.sourceUrl }]
+          : [],
+        keywords,
+      };
+    }
+    if (mode === "script") {
+      return {
+        script: fallbackResult.content || "",
+        sourceUrl: fallbackResult.sourceUrl,
+        sources: fallbackResult.sourceUrl
+          ? [{ title: "全网检索结果", url: fallbackResult.sourceUrl }]
+          : [],
+        keywords,
+      };
+    }
+    return {
+      intro: fallbackResult.content || "",
+      sourceUrl: fallbackResult.sourceUrl,
+      sources: fallbackResult.sourceUrl
+        ? [{ title: "全网检索结果", url: fallbackResult.sourceUrl }]
+        : [],
+      keywords,
+    };
+  }
+
   const query = buildTavilySearchQuery(scenicName, mode);
   setJobStatus(`联网搜索中：${query}`);
   const result = await searchWithTavily({
@@ -2392,13 +2415,7 @@ async function fetchSpotContentByMode(name, mode) {
     maxResults: mode === "script" ? 6 : 5,
   });
   const extracted = extractSpotContentFromTavilyResult(result, scenicName, mode);
-  if (!extracted) {
-    const err = new Error("WEB_CONTENT_EMPTY");
-    err.keywords = keywords;
-    throw err;
-  }
-
-  if (!result) {
+  if (!extracted || !result) {
     const err = new Error("WEB_CONTENT_EMPTY");
     err.keywords = keywords;
     throw err;
