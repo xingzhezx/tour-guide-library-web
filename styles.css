@@ -110,6 +110,10 @@ h3 {
   gap: 0.65rem;
 }
 
+.settings-card {
+  width: min(520px, 96vw);
+}
+
 .auth-desc,
 .auth-tip {
   margin: 0;

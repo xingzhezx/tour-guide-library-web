@@ -1,6 +1,7 @@
 const STORAGE_KEY = "tourGuideLibraryV1";
 const AUTH_USERS_KEY = "tourGuideUsersV1";
 const AUTH_SESSION_KEY = "tourGuideSessionV1";
+const WEB_SEARCH_SETTINGS_KEY = "tourGuideWebSearchSettingsV1";
 const PDFJS_LIB_URL =
   "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js";
 const PDFJS_WORKER_URL =
@@ -19,6 +20,8 @@ const DB_NAME = "tourGuideLibraryDB";
 const DB_VERSION = 1;
 const AUDIO_STORE = "audioBlobs";
 const EDITOR_SECTIONS = ["intro", "script", "webscript", "tips", "catalog", "audio"];
+const TAVILY_API_URL = "https://api.tavily.com/search";
+const TAVILY_MAX_QUERY_LENGTH = 400;
 const STARTER_TEMPLATES = [
   {
     id: "ancient_town",
@@ -67,6 +70,7 @@ const state = {
   authUser: "",
   currentView: "home",
   homeTab: "featured",
+  webSearchApiKey: "",
 };
 
 const el = {
@@ -76,6 +80,12 @@ const el = {
   authPassword: document.querySelector("#authPassword"),
   authLoginBtn: document.querySelector("#authLoginBtn"),
   authRegisterBtn: document.querySelector("#authRegisterBtn"),
+  searchSettingsOverlay: document.querySelector("#searchSettingsOverlay"),
+  searchSettingsBtn: document.querySelector("#searchSettingsBtn"),
+  searchSettingsCloseBtn: document.querySelector("#searchSettingsCloseBtn"),
+  searchSettingsSaveBtn: document.querySelector("#searchSettingsSaveBtn"),
+  searchSettingsClearBtn: document.querySelector("#searchSettingsClearBtn"),
+  searchApiKeyInput: document.querySelector("#searchApiKeyInput"),
   currentUser: document.querySelector("#currentUser"),
   logoutBtn: document.querySelector("#logoutBtn"),
   homeViewBtn: document.querySelector("#homeViewBtn"),
@@ -130,7 +140,9 @@ const el = {
 init();
 
 async function init() {
+  loadWebSearchSettings();
   bindEvents();
+  updateSearchSettingsView();
   registerServiceWorker();
   const loggedIn = await restoreSession();
   if (!loggedIn) {
@@ -158,6 +170,10 @@ function bindEvents() {
   el.authLoginBtn?.addEventListener("click", handleAuthLogin);
   el.authRegisterBtn?.addEventListener("click", handleAuthRegister);
   el.logoutBtn?.addEventListener("click", handleAuthLogout);
+  el.searchSettingsBtn?.addEventListener("click", openSearchSettings);
+  el.searchSettingsCloseBtn?.addEventListener("click", closeSearchSettings);
+  el.searchSettingsSaveBtn?.addEventListener("click", handleSaveSearchSettings);
+  el.searchSettingsClearBtn?.addEventListener("click", handleClearSearchSettings);
   el.homeViewBtn?.addEventListener("click", () => switchAppView("home"));
   el.libraryViewBtn?.addEventListener("click", () => switchAppView("library"));
   el.dashboardEnterBtn?.addEventListener("click", () => switchAppView("library"));
@@ -226,6 +242,62 @@ function bindEvents() {
     audioObjectUrls.forEach((url) => URL.revokeObjectURL(url));
     audioObjectUrls.clear();
   });
+}
+
+function loadWebSearchSettings() {
+  try {
+    const raw = localStorage.getItem(WEB_SEARCH_SETTINGS_KEY);
+    if (!raw) return;
+    const parsed = JSON.parse(raw);
+    state.webSearchApiKey = String(parsed?.tavilyApiKey || "").trim();
+  } catch (error) {
+    state.webSearchApiKey = "";
+  }
+}
+
+function saveWebSearchSettings() {
+  localStorage.setItem(
+    WEB_SEARCH_SETTINGS_KEY,
+    JSON.stringify({ tavilyApiKey: state.webSearchApiKey || "" }),
+  );
+}
+
+function updateSearchSettingsView() {
+  if (el.searchApiKeyInput) {
+    el.searchApiKeyInput.value = state.webSearchApiKey || "";
+  }
+  if (el.searchSettingsBtn) {
+    el.searchSettingsBtn.textContent = state.webSearchApiKey
+      ? "搜索设置已连接"
+      : "搜索设置";
+  }
+}
+
+function openSearchSettings() {
+  updateSearchSettingsView();
+  el.searchSettingsOverlay?.classList.remove("hidden");
+}
+
+function closeSearchSettings() {
+  el.searchSettingsOverlay?.classList.add("hidden");
+}
+
+function handleSaveSearchSettings() {
+  state.webSearchApiKey = String(el.searchApiKeyInput?.value || "").trim();
+  saveWebSearchSettings();
+  updateSearchSettingsView();
+  closeSearchSettings();
+  alert(state.webSearchApiKey ? "搜索设置已保存。" : "已清空搜索密钥。");
+}
+
+function handleClearSearchSettings() {
+  state.webSearchApiKey = "";
+  saveWebSearchSettings();
+  updateSearchSettingsView();
+  if (el.searchApiKeyInput) {
+    el.searchApiKeyInput.value = "";
+  }
+  alert("已清空 Tavily API Key。");
 }
 
 function getScopedStorageKey() {
@@ -2036,13 +2108,37 @@ function getCurrentScenicNameForWeb(spot) {
 }
 
 function formatWebSourceHint(result) {
-  return result?.sourceUrl ? `\n来源：${result.sourceUrl}` : "";
+  const urls = Array.isArray(result?.sources)
+    ? result.sources.map((item) => item.url).filter(Boolean)
+    : result?.sourceUrl
+      ? [result.sourceUrl]
+      : [];
+  if (!urls.length) return "";
+  const picked = urls.slice(0, 2).join("，");
+  return `\n来源：${picked}`;
 }
 
 function buildKeywordsHint(error) {
   return Array.isArray(error?.keywords) && error.keywords.length
     ? `\n本次检索词：${error.keywords.join("、")}`
     : "";
+}
+
+function resolveWebSearchErrorMessage(error, fallbackText) {
+  const message = String(error?.message || "");
+  if (message === "MISSING_TAVILY_API_KEY") {
+    return "请先在“搜索设置”里填写 Tavily API Key。";
+  }
+  if (/^TAVILY_401/.test(message) || /^TAVILY_403/.test(message)) {
+    return "Tavily API Key 无效，或当前密钥没有权限。请在“搜索设置”里更换。";
+  }
+  if (/^TAVILY_429/.test(message)) {
+    return "Tavily 搜索额度不足或请求过快，请稍后再试。";
+  }
+  if (/^TAVILY_/.test(message)) {
+    return "Tavily 搜索服务暂时不可用，请稍后重试。";
+  }
+  return fallbackText;
 }
 
 async function handleFetchIntroFromWeb() {
@@ -2072,7 +2168,12 @@ async function handleFetchIntroFromWeb() {
       alert("联网获取失败：当前设备处于离线状态。请先连接网络后重试。");
       return;
     }
-    alert(`联网获取失败：全网搜索未找到可信简介，或当前网络对外部站点有限制。${buildKeywordsHint(error)}`);
+    if (String(error?.message || "") === "MISSING_TAVILY_API_KEY") {
+      openSearchSettings();
+      alert("联网获取失败：请先在“搜索设置”里填写 Tavily API Key。");
+      return;
+    }
+    alert(`联网获取失败：${resolveWebSearchErrorMessage(error, "未找到可信简介，或当前网络对外部站点有限制。")}${buildKeywordsHint(error)}`);
   } finally {
     clearJobStatus(1200);
   }
@@ -2105,7 +2206,12 @@ async function handleFetchWebScriptFromWeb() {
       alert("联网获取失败：当前设备处于离线状态。请先连接网络后重试。");
       return;
     }
-    alert(`联网获取失败：全网搜索未找到可信讲解词。${buildKeywordsHint(error)}`);
+    if (String(error?.message || "") === "MISSING_TAVILY_API_KEY") {
+      openSearchSettings();
+      alert("联网获取失败：请先在“搜索设置”里填写 Tavily API Key。");
+      return;
+    }
+    alert(`联网获取失败：${resolveWebSearchErrorMessage(error, "未找到可信讲解词。")}${buildKeywordsHint(error)}`);
   } finally {
     clearJobStatus(1200);
   }
@@ -2138,7 +2244,12 @@ async function handleFetchTipsFromWeb() {
       alert("联网获取失败：当前设备处于离线状态。请先连接网络后重试。");
       return;
     }
-    alert(`联网获取失败：全网搜索未找到可信注意事项。${buildKeywordsHint(error)}`);
+    if (String(error?.message || "") === "MISSING_TAVILY_API_KEY") {
+      openSearchSettings();
+      alert("联网获取失败：请先在“搜索设置”里填写 Tavily API Key。");
+      return;
+    }
+    alert(`联网获取失败：${resolveWebSearchErrorMessage(error, "未找到可信注意事项。")}${buildKeywordsHint(error)}`);
   } finally {
     clearJobStatus(1200);
   }
@@ -2165,7 +2276,19 @@ async function fetchSpotContentByMode(name, mode) {
   }
 
   const keywords = buildScenicSearchKeywords(scenicName);
-  const result = await fetchFullWebVerifiedContent(scenicName, keywords, mode);
+  const query = buildTavilySearchQuery(scenicName, mode);
+  setJobStatus(`联网搜索中：${query}`);
+  const result = await searchWithTavily({
+    query,
+    maxResults: mode === "script" ? 6 : 5,
+  });
+  const extracted = extractSpotContentFromTavilyResult(result, scenicName, mode);
+  if (!extracted) {
+    const err = new Error("WEB_CONTENT_EMPTY");
+    err.keywords = keywords;
+    throw err;
+  }
+
   if (!result) {
     const err = new Error("WEB_CONTENT_EMPTY");
     err.keywords = keywords;
@@ -2174,23 +2297,149 @@ async function fetchSpotContentByMode(name, mode) {
 
   if (mode === "tips") {
     return {
-      tips: result.tips || [],
-      sourceUrl: result.sourceUrl,
+      tips: extracted.tips || [],
+      sourceUrl: result.sources?.[0]?.url || "",
+      sources: result.sources || [],
       keywords,
     };
   }
   if (mode === "script") {
     return {
-      script: result.content || "",
-      sourceUrl: result.sourceUrl,
+      script: extracted.script || "",
+      sourceUrl: result.sources?.[0]?.url || "",
+      sources: result.sources || [],
       keywords,
     };
   }
   return {
-    intro: result.content || "",
-    sourceUrl: result.sourceUrl,
+    intro: extracted.intro || "",
+    sourceUrl: result.sources?.[0]?.url || "",
+    sources: result.sources || [],
     keywords,
   };
+}
+
+function buildTavilySearchQuery(scenicName, mode) {
+  if (mode === "script") {
+    return `${scenicName} 导游讲解词 讲解顺序 历史文化 核心看点 游览路线`;
+  }
+  if (mode === "tips") {
+    return `${scenicName} 营业时间 门票价格 优惠政策 免票政策 导览图 预约 停车 交通 注意事项`;
+  }
+  return `${scenicName} 景区介绍 历史文化 核心看点 官方简介 旅游概况`;
+}
+
+async function searchWithTavily(params) {
+  const query = String(params?.query || "").trim().slice(0, TAVILY_MAX_QUERY_LENGTH);
+  const apiKey = String(state.webSearchApiKey || "").trim();
+  if (!apiKey) {
+    throw new Error("MISSING_TAVILY_API_KEY");
+  }
+  if (!query) {
+    throw new Error("EMPTY_QUERY");
+  }
+
+  const response = await fetch(TAVILY_API_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      query,
+      search_depth: "basic",
+      max_results: Number(params?.maxResults || 5),
+      include_answer: "basic",
+    }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => "");
+    throw new Error(`TAVILY_${response.status}:${errorText || response.statusText}`);
+  }
+
+  const data = await response.json();
+  return {
+    query: String(data?.query || query),
+    answer: String(data?.answer || ""),
+    responseTime: Number(data?.response_time || 0),
+    sources: Array.isArray(data?.results)
+      ? data.results.map((item) => ({
+          title: String(item?.title || "未命名来源"),
+          url: String(item?.url || ""),
+          content: sanitizeNetworkIntro(item?.content || ""),
+          score: Number(item?.score || 0),
+        }))
+      : [],
+  };
+}
+
+function buildTavilyContextText(result) {
+  const chunks = [];
+  if (result?.answer) {
+    chunks.push(String(result.answer).trim());
+  }
+  (result?.sources || []).forEach((item) => {
+    const block = [item.title, item.content].filter(Boolean).join("\n");
+    if (block.trim()) {
+      chunks.push(block.trim());
+    }
+  });
+  return sanitizeNetworkIntro(chunks.join("\n\n"));
+}
+
+function extractSpotContentFromTavilyResult(result, scenicName, mode) {
+  const aggregateText = buildTavilyContextText(result);
+  if (!aggregateText) return null;
+
+  if (mode === "tips") {
+    const tips = extractStructuredTravelTips(aggregateText, scenicName);
+    return tips.length ? { tips } : null;
+  }
+
+  if (mode === "script") {
+    const answerText = sanitizeNetworkIntro(result?.answer || "");
+    const rawScript = pickScriptParagraphsFromLongText(
+      [answerText, aggregateText].filter(Boolean).join("\n\n"),
+      scenicName,
+    );
+    const script = rawScript
+      ? buildReadableWebScript(rawScript, scenicName)
+      : buildReadableWebScript(aggregateText, scenicName);
+    return script ? { script } : null;
+  }
+
+  const intro = buildReadableIntroFromSearch(aggregateText, scenicName);
+  return intro ? { intro } : null;
+}
+
+function buildReadableIntroFromSearch(rawText, scenicName) {
+  const sentences = splitChineseSentences(
+    sanitizeNetworkIntro(rawText).replace(/\n+/g, ""),
+  ).filter((line) => {
+    const normalizedLine = normalizeScenicKeyword(line);
+    return (
+      normalizedLine.includes(normalizeScenicKeyword(scenicName)) ||
+      /位于|历史|文化|景区|景点|古建|街区|遗址|博物馆|名胜/.test(line)
+    );
+  });
+
+  const selected = sentences.slice(0, 3);
+  return selected.length ? selected.join("\n") : pickIntroParagraphFromLongText(rawText, scenicName);
+}
+
+function buildReadableWebScript(rawText, scenicName) {
+  const sanitized = sanitizeNetworkIntro(rawText);
+  const sentences = splitChineseSentences(sanitized.replace(/\n+/g, ""));
+  const picked = sentences.filter((line) => {
+    const normalizedLine = normalizeScenicKeyword(line);
+    return (
+      normalizedLine.includes(normalizeScenicKeyword(scenicName)) ||
+      /欢迎|历史|文化|建筑|看点|故事|游览|来到|景区|景点|可以看到/.test(line)
+    );
+  });
+  const base = (picked.length ? picked : sentences).slice(0, 8).join("");
+  return refinePersonalScriptText(base || sanitized);
 }
 
 async function fetchFullWebVerifiedContent(scenicName, keywords, mode) {

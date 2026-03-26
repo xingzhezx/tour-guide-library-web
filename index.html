@@ -25,6 +25,7 @@
       <div class="topbar-actions">
         <span id="currentUser" class="current-user hidden"></span>
         <button id="logoutBtn" class="ghost hidden">退出登录</button>
+        <button id="searchSettingsBtn" class="ghost" type="button">搜索设置</button>
         <button id="exportBtn" class="ghost">导出数据</button>
         <label class="import-label">
           导入数据
@@ -57,6 +58,25 @@
           <button id="authRegisterBtn" type="button" class="ghost">注册账号</button>
         </div>
         <p class="auth-tip">提示：注册后数据按账号隔离保存在浏览器本地。</p>
+      </div>
+    </section>
+
+    <section id="searchSettingsOverlay" class="auth-overlay hidden">
+      <div class="auth-card settings-card">
+        <div class="row-between">
+          <h2>联网搜索设置</h2>
+          <button id="searchSettingsCloseBtn" type="button" class="ghost">关闭</button>
+        </div>
+        <p class="auth-desc">参考 OpenMAIC 的公开实现，这里的联网搜索改为使用 Tavily Search API。搜索结果会用于景区介绍、网络讲解词和注意事项补全。</p>
+        <label>
+          Tavily API Key
+          <input id="searchApiKeyInput" type="password" placeholder="请输入 Tavily API Key" autocomplete="off" />
+        </label>
+        <p class="auth-tip">说明：这是你自己的搜索密钥，仅保存在当前浏览器，用于从网页直接发起联网搜索。</p>
+        <div class="auth-actions">
+          <button id="searchSettingsSaveBtn" type="button">保存设置</button>
+          <button id="searchSettingsClearBtn" type="button" class="ghost">清除密钥</button>
+        </div>
       </div>
     </section>
 
