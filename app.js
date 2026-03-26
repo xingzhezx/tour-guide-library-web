@@ -1699,8 +1699,96 @@ function deriveSpotNameFromFile(fileName) {
   const pure = String(fileName || "")
     .replace(/\.[a-zA-Z0-9]+$/, "")
     .replace(/[_-]+/g, " ")
+    .replace(/(的?讲解词?|导游词|解说词|讲解稿|讲解|导览词|资料|文案|录音|音频|扫描件|文字版|完整版|整理版)$/g, "")
     .trim();
   return pure || `新景区 ${state.spots.length + 1}`;
+}
+
+function sanitizeSpotNameLabel(rawName) {
+  return String(rawName || "")
+    .replace(/[()（）【】\[\]<>《》]/g, " ")
+    .replace(/\.[a-zA-Z0-9]+$/, "")
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .replace(/(景区介绍|景点介绍|景区详情|讲解词|导游词|解说词|讲解稿|讲解内容|注意事项)$/g, "")
+    .replace(/(的?讲解词?|导游词|解说词|讲解稿|讲解|导览词|资料|文案|录音|音频|扫描件|文字版|完整版|整理版)$/g, "")
+    .trim();
+}
+
+function isLikelyGenericSpotName(name) {
+  const value = sanitizeSpotNameLabel(name).replace(/\s+/g, "");
+  if (!value) return true;
+  if (/^(新景区\d*|未命名景区|讲解|导游词|讲解词|景区|景点|旅游|资料)$/.test(value)) {
+    return true;
+  }
+  if (/(讲解|导游|解说|资料|文案|录音|音频|扫描件|文字版|完整版|整理版)/.test(value)) {
+    return true;
+  }
+  if (/^(?:中国)?[\u4e00-\u9fa5]{2,6}(?:省|市|县|区|州|盟|旗)$/.test(value)) {
+    return true;
+  }
+  return false;
+}
+
+function extractScenicNameCandidates(text) {
+  const source = normalizeImportedText(String(text || "")).slice(0, 4000);
+  if (!source) return [];
+
+  const weighted = new Map();
+  const addCandidate = (raw, score = 1) => {
+    const candidate = sanitizeSpotNameLabel(raw).replace(/\s+/g, "");
+    if (!candidate || candidate.length < 2 || candidate.length > 18) return;
+    if (/^(讲解|导游词|讲解词|景区|景点|旅游|资料|游客|大家)$/.test(candidate)) return;
+    if (/^(营业时间|门票价格|优惠政策|导览图|其他提醒)$/.test(candidate)) return;
+    if (/^(?:中国)?[\u4e00-\u9fa5]{2,6}(?:省|市|县|区|州|盟|旗)$/.test(candidate)) return;
+    const current = weighted.get(candidate) || 0;
+    weighted.set(candidate, current + score);
+  };
+
+  const suffixPattern =
+    /([一-龥]{2,18}(?:风景名胜区|风景区|景区|景点|公园|古镇|古城|街区|博物馆|纪念馆|陈列馆|展览馆|故居|遗址|名胜区|度假区|寺|宫|祠|院|楼|桥|塔|山|湖|江|河|溪|谷|洞|巷))/g;
+  for (const match of source.matchAll(suffixPattern)) {
+    addCandidate(match[1], 8);
+  }
+
+  const introPatterns = [
+    /(?:欢迎来到|来到|走进|前往|参观|游览|我们现在来到|这里是)([一-龥]{2,12})/g,
+    /([一-龥]{2,12})(?:位于|坐落于|始建于|建于|地处|地处于)/g,
+    /(?:本次讲解|今天讲解|今天介绍|本次介绍)([一-龥]{2,12})/g,
+  ];
+  introPatterns.forEach((regex) => {
+    for (const match of source.matchAll(regex)) {
+      addCandidate(match[1], 6);
+    }
+  });
+
+  const scenicWords = Array.from(weighted.keys());
+  scenicWords.forEach((candidate) => {
+    const escaped = candidate.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const hits = source.match(new RegExp(escaped, "g")) || [];
+    if (hits.length > 1) {
+      addCandidate(candidate, hits.length * 2);
+    }
+    if (/(风景名胜区|风景区|景区|景点|公园|古镇|古城|街区|博物馆|纪念馆|遗址)/.test(candidate)) {
+      addCandidate(candidate, 4);
+    }
+  });
+
+  return Array.from(weighted.entries())
+    .sort((a, b) => b[1] - a[1] || a[0].length - b[0].length)
+    .map(([name]) => name);
+}
+
+function inferScenicNameFromSpotContent(spot) {
+  const text = [
+    spot?.intro || "",
+    spot?.script || "",
+    spot?.webScript || "",
+    Array.isArray(spot?.tips) ? spot.tips.join("\n") : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+  return extractScenicNameCandidates(text)[0] || "";
 }
 
 async function transcribeAudioFile(file) {
@@ -2104,7 +2192,28 @@ function buildTipsFromTranscript(sentences) {
 }
 
 function getCurrentScenicNameForWeb(spot) {
-  return String(el.nameInput.value || spot?.name || "").trim();
+  const typedName = sanitizeSpotNameLabel(el.nameInput.value || spot?.name || "");
+  const inferredName = inferScenicNameFromSpotContent(spot);
+  if (typedName && !isLikelyGenericSpotName(typedName)) {
+    return typedName;
+  }
+  if (inferredName) {
+    return inferredName;
+  }
+  return typedName;
+}
+
+function syncResolvedScenicNameToSpot(spot) {
+  if (!spot) return "";
+  const resolved = getCurrentScenicNameForWeb(spot);
+  const currentName = sanitizeSpotNameLabel(spot.name || "");
+  if (resolved && (isLikelyGenericSpotName(currentName) || !currentName)) {
+    spot.name = resolved;
+    if (el.nameInput && getCurrentSpot()?.id === spot.id) {
+      el.nameInput.value = resolved;
+    }
+  }
+  return resolved;
 }
 
 function formatWebSourceHint(result) {
@@ -2145,7 +2254,7 @@ async function handleFetchIntroFromWeb() {
   const current = getCurrentSpot();
   if (!current) return;
 
-  const name = getCurrentScenicNameForWeb(current);
+  const name = syncResolvedScenicNameToSpot(current);
   if (!name) {
     alert("请先填写景区名称，再联网补全介绍。");
     return;
@@ -2183,7 +2292,7 @@ async function handleFetchWebScriptFromWeb() {
   const current = getCurrentSpot();
   if (!current) return;
 
-  const name = getCurrentScenicNameForWeb(current);
+  const name = syncResolvedScenicNameToSpot(current);
   if (!name) {
     alert("请先填写景区名称，再联网补全网络讲解词。");
     return;
@@ -2221,7 +2330,7 @@ async function handleFetchTipsFromWeb() {
   const current = getCurrentSpot();
   if (!current) return;
 
-  const name = getCurrentScenicNameForWeb(current);
+  const name = syncResolvedScenicNameToSpot(current);
   if (!name) {
     alert("请先填写景区名称，再联网补全注意事项。");
     return;
@@ -2897,13 +3006,12 @@ function formatTipLine(label, line) {
 }
 
 function buildScenicSearchKeywords(name) {
-  const raw = String(name || "").trim();
+  const raw = sanitizeSpotNameLabel(name);
   if (!raw) return [];
 
   const base = raw
     .replace(/[()（）【】\[\]<>《》]/g, " ")
     .replace(/\s+/g, " ")
-    .replace(/(景区介绍|景点介绍|景区详情|讲解词|导游词|注意事项)$/g, "")
     .trim();
 
   const normalized = (base || raw).replace(/\s+/g, "");
@@ -2960,11 +3068,8 @@ function normalizeScenicKeyword(text) {
 }
 
 function guessSpotNameFromText(text) {
-  const source = String(text || "").slice(0, 220);
-  const match = source.match(
-    /([一-龥]{2,20}(?:景区|景点|公园|古镇|博物馆|风景区|度假区|遗址|寺|山|湖|街区))/,
-  );
-  return match ? match[1] : "";
+  const source = String(text || "").slice(0, 4000);
+  return extractScenicNameCandidates(source)[0] || "";
 }
 
 function setJobStatus(text) {
