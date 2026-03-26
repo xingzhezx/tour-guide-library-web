@@ -266,11 +266,6 @@ function updateSearchSettingsView() {
   if (el.searchApiKeyInput) {
     el.searchApiKeyInput.value = state.webSearchApiKey || "";
   }
-  if (el.searchSettingsBtn) {
-    el.searchSettingsBtn.textContent = state.webSearchApiKey
-      ? "高级搜索已连接"
-      : "高级搜索";
-  }
 }
 
 function openSearchSettings() {
@@ -301,7 +296,6 @@ function handleClearSearchSettings() {
   if (el.searchApiKeyInput) {
     el.searchApiKeyInput.value = "";
   }
-  alert("已清空 Tavily API Key。");
 }
 
 function getScopedStorageKey() {
@@ -2240,16 +2234,16 @@ function buildKeywordsHint(error) {
 function resolveWebSearchErrorMessage(error, fallbackText) {
   const message = String(error?.message || "");
   if (message === "MISSING_TAVILY_API_KEY") {
-    return "当前未配置 Tavily API Key，系统将自动回退到免密钥全网检索。";
+    return fallbackText;
   }
   if (/^TAVILY_401/.test(message) || /^TAVILY_403/.test(message)) {
-    return "Tavily API Key 无效，或当前密钥没有权限。请在“搜索设置”里更换。";
+    return "高级搜索密钥无效，系统已切回默认联网搜索。";
   }
   if (/^TAVILY_429/.test(message)) {
-    return "Tavily 搜索额度不足或请求过快，请稍后再试。";
+    return "高级搜索额度不足或请求过快，请稍后再试。";
   }
   if (/^TAVILY_/.test(message)) {
-    return "Tavily 搜索服务暂时不可用，请稍后重试。";
+    return "高级搜索服务暂时不可用，请稍后重试。";
   }
   return fallbackText;
 }
