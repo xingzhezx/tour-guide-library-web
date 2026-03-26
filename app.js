@@ -268,8 +268,8 @@ function updateSearchSettingsView() {
   }
   if (el.searchSettingsBtn) {
     el.searchSettingsBtn.textContent = state.webSearchApiKey
-      ? "搜索设置已连接"
-      : "搜索设置";
+      ? "高级搜索已连接"
+      : "高级搜索";
   }
 }
 
@@ -287,7 +287,11 @@ function handleSaveSearchSettings() {
   saveWebSearchSettings();
   updateSearchSettingsView();
   closeSearchSettings();
-  alert(state.webSearchApiKey ? "搜索设置已保存。" : "已清空搜索密钥。");
+  alert(
+    state.webSearchApiKey
+      ? "高级搜索设置已保存，后续会优先使用 Tavily。"
+      : "已切回默认联网搜索模式。",
+  );
 }
 
 function handleClearSearchSettings() {
